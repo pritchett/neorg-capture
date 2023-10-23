@@ -23,7 +23,6 @@ module.config.private = {
   gid = nil
 }
 
-
 module.load = function()
   module.required['core.neorgcmd'].add_commands_from_table({
     ['capture'] = {
@@ -81,7 +80,7 @@ module.private = {
     local data = {}
 
     local build_data_entry = function(item)
-      return { template = item.name, file = item.file, type = item.type, headline = item.headline }
+      return { template = item.name, file = item.file, type = item.type, headline = item.headline, path = item.path }
     end
 
     local item_is_enabled = function(item)
@@ -123,26 +122,50 @@ module.private = {
         local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
         if data.type == "entry" then
 
-          if data.headline then
-            local ts = module.required['core.integrations.treesitter']
-            local query = "( (heading1 title: (paragraph_segment) @title_text) (#eq? @title_text " .. data.headline .. ") ) @next-segment"
+          local ts = module.required['core.integrations.treesitter']
 
-            local end_line = function(node, child_count)
-              if child_count > 0 then
-                local child = node:child(child_count - 1)
-                return child:end_()
+          local end_line = function(node)
+            local child_count = node:child_count()
+            if child_count > 0 then
+              local child = node:child(child_count - 1)
+              return child:end_()
+            else
+              return node:end_()
+            end
+          end
+
+          local cb = function(query, id, node, _)
+            if(query.captures[id] ~= "org-capture-target") then
+              return false
+            end
+            local end_linenr = end_line(node)
+            vim.api.nvim_buf_set_lines(0, end_linenr, end_linenr, false, lines)
+            vim.cmd.write({ args = { path }, bang = true })
+            return true
+          end
+
+          if data.headline then
+            local query = "( (heading1 title: (paragraph_segment) @title_text) (#eq? @title_text " .. data.headline .. ") ) @org-capture-target"
+            ts.execute_query(query, cb, save_bufnr)
+          elseif data.path then
+            local query = "("
+            local end_parens = ""
+
+            local get_headingnr = function(i)
+              if i > 6 then
+                return 6
               else
-                return node:end_()
+                return i
               end
             end
 
-            local cb = function(_, _, node, _)
-              local child_count = node:child_count()
-              local end_linenr = end_line(node, child_count)
-              vim.api.nvim_buf_set_lines(0, end_linenr, end_linenr, false, lines)
-              vim.cmd.write({ args = { path }, bang = true })
-              return true
+            for i, headline in ipairs(data.path) do
+              local headingnr = get_headingnr(i)
+              query = query .. "(heading" .. headingnr .. " title: (paragraph_segment) @t" .. i .. " (#eq? @t" .. i .. " \"" .. headline .. "\"" .. ") "
+              end_parens = end_parens .. ")"
             end
+
+            query = query ..  " ) @org-capture-target" .. end_parens
 
             ts.execute_query(query, cb, save_bufnr)
           else
@@ -179,6 +202,7 @@ module.on_event = function(event)
           file = data[idx].file,
           type = data[idx].type,
           headline = data[idx].headline,
+          path = data[idx].path,
           calling_file = current_name,
           calling_bufnr = calling_bufnr,
           on_save = function(bufnr, passed_data) module.private.on_save(bufnr, passed_data) end
