@@ -10,7 +10,7 @@ module.setup = function()
       'core.dirman',
       'core.dirman.utils',
       'external.templates',
-
+      'core.integrations.treesitter'
     }
   }
 end
@@ -50,7 +50,7 @@ module.load = function()
       vim.api.nvim_create_autocmd("QuitPre", {
         buffer = bufnr,
         callback = function(_)
-          return args.data.on_save(bufnr)
+          return args.data.on_save(bufnr, args.data)
         end
       })
 
@@ -80,16 +80,71 @@ module.private = {
     local items = {}
     local data = {}
 
+    local build_data_entry = function(item)
+      return { template = item.name, file = item.file, type = item.type, headline = item.headline }
+    end
+
+    local item_is_enabled = function(item)
+      return item.enabled == nil or type(item.enabled) == 'function' and item.enabled(bufnr) or item.enabled
+    end
+
     for _, item in ipairs(conf.templates) do
-      if item.enabled == nil or type(item.enabled) == 'function' and item.enabled(bufnr) or item.enabled then
-        if item.name and item.name ~= "" then
-          table.insert(items, item.description)
-          table.insert(data, { template = item.name, file = item.file })
+      if item.type then
+        if item_is_enabled(item) then
+          if item.name and item.name ~= "" then
+            table.insert(items, item.description)
+            table.insert(data, build_data_entry(item))
+          end
         end
       end
     end
 
     return items, data
+  end,
+
+  on_save = function(bufnr, data)
+
+    local save_file = data.file and data.file:gsub(".norg$", "")
+    if not save_file then
+      vim.notify("No file set", vim.log.levels.ERROR)
+      return false
+    end
+
+    vim.api.nvim_buf_call(data.calling_bufnr, function()
+      local path = module.required['core.dirman.utils'].expand_path(save_file)
+      if not path then
+        vim.notify("Some error", vim.log.levels.ERROR)
+        return
+      end
+
+      local save_bufnr = vim.api.nvim_create_buf(false, false)
+      vim.api.nvim_buf_call(save_bufnr, function()
+        pcall(vim.cmd.read, path)
+        local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+        if data.type == "entry" then
+
+          if data.headline then
+            local ts = module.required['core.integrations.treesitter']
+            local query = "( (heading1 title: (paragraph_segment) @title_text) (#eq? @title_text " .. data.headline .. ") ) @next-segment"
+            local cb = function(_, _, node, _)
+              local child_count = node:child_count()
+              local child = node:child(child_count - 1)
+              local end_line = child:end_()
+              vim.api.nvim_buf_set_lines(0, end_line, end_line, false, lines)
+              vim.cmd.write({ args = { path }, bang = true })
+              return true
+            end
+
+            ts.execute_query(query, cb, save_bufnr)
+          else
+            vim.api.nvim_buf_set_lines(0, -1, -1, false, lines)
+            vim.cmd.write({ args = { path }, bang = true })
+          end
+
+        end
+      end)
+    end)
+
   end
 }
 
@@ -102,8 +157,7 @@ module.on_event = function(event)
       return
     end
 
-    local original_bufnr = vim.api.nvim_get_current_buf()
-
+    local calling_bufnr = vim.api.nvim_get_current_buf()
     vim.ui.select(items, { prompt = "Choose Template" }, function(_, idx)
       local current_name = vim.api.nvim_buf_get_name(0)
       local file = "neorg-capture://" .. data[idx].template .. "//" .. current_name .. ".norg"
@@ -113,32 +167,12 @@ module.on_event = function(event)
         pattern = file,
         data = {
           template = data[idx].template,
+          file = data[idx].file,
+          type = data[idx].type,
+          headline = data[idx].headline,
           calling_file = current_name,
-          calling_bufnr = vim.api.nvim_get_current_buf(),
-          on_save = function(bufnr)
-
-            local save_file = data[idx].file:gsub(".norg$", "")
-            if not save_file then
-              vim.notify("No file set", vim.log.levels.ERROR)
-              return false
-            end
-
-            vim.api.nvim_buf_call(original_bufnr, function()
-              local path = module.required['core.dirman.utils'].expand_path(save_file)
-              if not path then
-                vim.notify("Some error", vim.log.levels.ERROR)
-                return
-              end
-
-              local save_bufnr = vim.api.nvim_create_buf(false, false)
-              vim.api.nvim_buf_call(save_bufnr, function()
-                pcall(vim.cmd.read, path)
-                local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-                vim.api.nvim_buf_set_lines(0, -1, -1, false, lines)
-                vim.cmd.write({ args = { path }, bang = true })
-              end)
-            end)
-          end
+          calling_bufnr = calling_bufnr,
+          on_save = function(bufnr, passed_data) module.private.on_save(bufnr, passed_data) end
         }
       } )
     end)
