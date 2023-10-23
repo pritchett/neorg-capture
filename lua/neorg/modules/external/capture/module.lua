@@ -126,11 +126,20 @@ module.private = {
           if data.headline then
             local ts = module.required['core.integrations.treesitter']
             local query = "( (heading1 title: (paragraph_segment) @title_text) (#eq? @title_text " .. data.headline .. ") ) @next-segment"
+
+            local end_line = function(node, child_count)
+              if child_count > 0 then
+                local child = node:child(child_count - 1)
+                return child:end_()
+              else
+                return node:end_()
+              end
+            end
+
             local cb = function(_, _, node, _)
               local child_count = node:child_count()
-              local child = node:child(child_count - 1)
-              local end_line = child:end_()
-              vim.api.nvim_buf_set_lines(0, end_line, end_line, false, lines)
+              local end_linenr = end_line(node, child_count)
+              vim.api.nvim_buf_set_lines(0, end_linenr, end_linenr, false, lines)
               vim.cmd.write({ args = { path }, bang = true })
               return true
             end
