@@ -80,7 +80,7 @@ module.private = {
     local data = {}
 
     local build_data_entry = function(item)
-      return { template = item.name, file = item.file, type = item.type, headline = item.headline, path = item.path }
+      return { template = item.name, file = item.file, type = item.type, headline = item.headline, path = item.path, query = item.query }
     end
 
     local item_is_enabled = function(item)
@@ -109,73 +109,102 @@ module.private = {
       return false
     end
 
+    local path = nil
     vim.api.nvim_buf_call(data.calling_bufnr, function()
-      local path = module.required['core.dirman.utils'].expand_path(save_file)
-      if not path then
-        vim.notify("Some error", vim.log.levels.ERROR)
-        return
+      path = module.required['core.dirman.utils'].expand_path(save_file)
+    end)
+
+    if not path then
+      vim.notify("Some error", vim.log.levels.ERROR)
+      return
+    end
+
+    local already_open = vim.fn.bufexists(path) > 0
+    local target_bufnr = vim.fn.bufnr(path, true)
+
+    if not target_bufnr then
+      vim.notify("Could not open or locate buffer for " .. path, vim.log.levels.ERROR)
+      return
+    end
+
+    if not already_open then
+      vim.api.nvim_buf_set_option(target_bufnr, "filetype", "norg")
+    end
+
+    local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    if data.type == "entry" then
+
+      local ts = module.required['core.integrations.treesitter']
+
+      local end_line = function(node)
+        local child_count = node:child_count()
+        if child_count > 0 then
+          local child = node:child(child_count - 1)
+          return child:end_()
+        else
+          return node:end_()
+        end
       end
 
-      local save_bufnr = vim.api.nvim_create_buf(false, false)
-      vim.api.nvim_buf_call(save_bufnr, function()
-        pcall(vim.cmd.read, path)
-        local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-        if data.type == "entry" then
+      local set_lines_and_write = function(end_linenr)
+        vim.api.nvim_buf_set_lines(target_bufnr, end_linenr, end_linenr, false, lines)
+        vim.api.nvim_buf_call(target_bufnr, function()
 
-          local ts = module.required['core.integrations.treesitter']
+          --Works if the buffer was already open
+          vim.cmd.norm( { range = { end_linenr + 1, end_linenr + #lines }, args = { "==" } })
 
-          local end_line = function(node)
-            local child_count = node:child_count()
-            if child_count > 0 then
-              local child = node:child(child_count - 1)
-              return child:end_()
-            else
-              return node:end_()
-            end
-          end
+          vim.cmd.write({ args = { path }, bang = true })
+        end)
+      end
 
-          local cb = function(query, id, node, _)
-            if(query.captures[id] ~= "org-capture-target") then
-              return false
-            end
-            local end_linenr = end_line(node)
-            vim.api.nvim_buf_set_lines(0, end_linenr, end_linenr, false, lines)
-            vim.cmd.write({ args = { path }, bang = true })
-            return true
-          end
-
-          if data.headline then
-            local query = "( (heading1 title: (paragraph_segment) @title_text) (#eq? @title_text " .. data.headline .. ") ) @org-capture-target"
-            ts.execute_query(query, cb, save_bufnr)
-          elseif data.path then
-            local query = "("
-            local end_parens = ""
-
-            local get_headingnr = function(i)
-              if i > 6 then
-                return 6
-              else
-                return i
-              end
-            end
-
-            for i, headline in ipairs(data.path) do
-              local headingnr = get_headingnr(i)
-              query = query .. "(heading" .. headingnr .. " title: (paragraph_segment) @t" .. i .. " (#eq? @t" .. i .. " \"" .. headline .. "\"" .. ") "
-              end_parens = end_parens .. ")"
-            end
-
-            query = query ..  " ) @org-capture-target" .. end_parens
-
-            ts.execute_query(query, cb, save_bufnr)
-          else
-            vim.api.nvim_buf_set_lines(0, -1, -1, false, lines)
-            vim.cmd.write({ args = { path }, bang = true })
-          end
-
+      local cb = function(query, id, node, _)
+        if(query.captures[id] ~= "org-capture-target") then
+          return false
         end
-      end)
-    end)
+        local end_linenr = end_line(node)
+        set_lines_and_write(end_linenr)
+        return true -- Returning true makes `ts.execute_query` stop iterating over captures
+      end
+
+      local get_headingnr = function(i)
+        if i > 6 then
+          return 6
+        else
+          return i
+        end
+      end
+
+      local build_query = function(headline_path)
+        local query = "("
+        local end_parens = ""
+        for i, headline in ipairs(headline_path) do
+          local headingnr = get_headingnr(i)
+          query = query .. "(heading" .. headingnr .. " title: (paragraph_segment) @t" .. i .. " (#eq? @t" .. i .. " \"" .. headline .. "\"" .. ") "
+          end_parens = end_parens .. ")"
+        end
+        query = query ..  " ) @org-capture-target" .. end_parens
+        return query
+      end
+
+      local exec_query = function(query)
+        ts.execute_query(query, cb, target_bufnr)
+      end
+
+      local build_and_execute_query = function(path_or_headline)
+        local query = build_query(path_or_headline)
+        exec_query(query)
+      end
+
+      if data.headline then
+        build_and_execute_query({ data.headline })
+      elseif data.path then
+        build_and_execute_query(data.path)
+      elseif data.query then
+        exec_query(data.query)
+      else
+        set_lines_and_write(-1) -- Negative one means the end of the file
+      end
+    end
 
   end
 }
@@ -203,6 +232,7 @@ module.on_event = function(event)
           type = data[idx].type,
           headline = data[idx].headline,
           path = data[idx].path,
+          query = data[idx].query,
           calling_file = current_name,
           calling_bufnr = calling_bufnr,
           on_save = function(bufnr, passed_data) module.private.on_save(bufnr, passed_data) end
