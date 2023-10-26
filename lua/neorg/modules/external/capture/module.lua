@@ -103,11 +103,21 @@ module.private = {
 
   on_save = function(bufnr, data)
 
-    local save_file = data.file and data.file:gsub(".norg$", "")
+    local save_file
+    if type(data.file) == "function" then
+      save_file = data.file()
+    elseif type(data.file) == "string" then
+      save_file = data.file
+    else
+      save_file = nil
+    end
+
     if not save_file then
       vim.notify("No file set", vim.log.levels.ERROR)
       return false
     end
+
+    save_file = save_file:gsub(".norg$", "")
 
     local path = nil
     vim.api.nvim_buf_call(data.calling_bufnr, function()
@@ -115,7 +125,7 @@ module.private = {
     end)
 
     if not path then
-      vim.notify("Some error", vim.log.levels.ERROR)
+      vim.notify("Could not determine target file path", vim.log.levels.ERROR)
       return
     end
 
