@@ -156,10 +156,6 @@ module.private = {
     local set_lines_and_write = function(end_linenr, insert_lines)
       vim.api.nvim_buf_set_lines(target_bufnr, end_linenr, end_linenr, false, insert_lines)
       vim.api.nvim_buf_call(target_bufnr, function()
-
-        --Works if the buffer was already open
-        -- vim.cmd.norm( { range = { end_linenr + 1, end_linenr + #lines }, args = { "==" } })
-
         vim.cmd.write({ args = { path }, bang = true })
       end)
     end
@@ -173,15 +169,6 @@ module.private = {
         set_lines_and_write(end_linenr, insert_lines)
         return true -- Returning true makes `ts.execute_query` stop iterating over captures
       end
-    end
-
-    local cb_datetree = function(query, id, node, _)
-      if(query.captures[id] ~= "org-capture-target") then
-        return false
-      end
-      local end_linenr = end_line(node)
-      set_lines_and_write(end_linenr)
-      return true -- Returning true makes `ts.execute_query` stop iterating over captures
     end
 
     local get_headingnr = function(i)
@@ -222,11 +209,15 @@ module.private = {
     end
 
     local build_and_execute_query = function(path_or_headline, cb)
+      if not path_or_headline or #path_or_headline == 0 then
+        return true
+      end
       local query = build_query(path_or_headline)
       return exec_query(query, cb)
     end
 
-    if data.datetree then
+    local do_datetree = function(datetree_path)
+
       local cb_find_datetree_path = function(query, id, _, _)
         if(query.captures[id] ~= "org-capture-target") then
           return false
@@ -234,12 +225,17 @@ module.private = {
         return true -- Returning true makes `ts.execute_query` stop iterating over captures
       end
 
-      local datetree_path = { data.headline, os.date("%Y"), os.date("%Y-%m %B"), os.date("%Y-%m-%d %A") }
+      local dates = { os.date("%Y"), os.date("%Y-%m %B"), os.date("%Y-%m-%d %A") }
+
+      for _, value in ipairs(dates) do
+        table.insert(datetree_path, value)
+      end
+
       local not_found = {}
+
       while not build_and_execute_query(datetree_path, cb_find_datetree_path) do
-        print(vim.inspect(datetree_path))
         local element = table.remove(datetree_path, #datetree_path)
-        table.insert(not_found, #not_found + 1, element)
+        table.insert(not_found, 1, element)
       end
 
       local remaining_path = {}
@@ -247,16 +243,27 @@ module.private = {
         table.insert(remaining_path, string.rep("*", #datetree_path + i) .. " " .. remaining)
       end
 
-      print(vim.inspect(remaining_path))
+      if not #datetree_path == 0 then
+        build_and_execute_query(datetree_path, cb_non_datetree(remaining_path))
+      else
+        set_lines_and_write(-1, remaining_path)
+      end
 
-      build_and_execute_query(datetree_path, cb_non_datetree(remaining_path))
-
-      -- datetree_path = datetree_path + not_found
       for _, value in ipairs(not_found) do
         table.insert(datetree_path, value)
       end
 
       build_and_execute_query(datetree_path, cb_non_datetree(lines))
+    end
+
+    if data.datetree then
+      if (data.headline) then
+        do_datetree({ data.headline })
+      elseif data.path then
+        do_datetree(data.path)
+      else
+        do_datetree({})
+      end
     elseif data.headline then
       build_and_execute_query({ data.headline }, cb_non_datetree(lines))
     elseif data.path then
