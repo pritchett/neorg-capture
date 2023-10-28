@@ -80,7 +80,7 @@ module.private = {
     local data = {}
 
     local build_data_entry = function(item)
-      return { template = item.name, file = item.file, headline = item.headline, path = item.path, query = item.query }
+      return { template = item.name, file = item.file, headline = item.headline, path = item.path, query = item.query, datetree = item.datetree }
     end
 
     local item_is_enabled = function(item)
@@ -153,18 +153,29 @@ module.private = {
       end
     end
 
-    local set_lines_and_write = function(end_linenr)
-      vim.api.nvim_buf_set_lines(target_bufnr, end_linenr, end_linenr, false, lines)
+    local set_lines_and_write = function(end_linenr, insert_lines)
+      vim.api.nvim_buf_set_lines(target_bufnr, end_linenr, end_linenr, false, insert_lines)
       vim.api.nvim_buf_call(target_bufnr, function()
 
         --Works if the buffer was already open
-        vim.cmd.norm( { range = { end_linenr + 1, end_linenr + #lines }, args = { "==" } })
+        -- vim.cmd.norm( { range = { end_linenr + 1, end_linenr + #lines }, args = { "==" } })
 
         vim.cmd.write({ args = { path }, bang = true })
       end)
     end
 
-    local cb = function(query, id, node, _)
+    local cb_non_datetree = function(insert_lines)
+      return function(query, id, node, _)
+        if(query.captures[id] ~= "org-capture-target") then
+          return false
+        end
+        local end_linenr = end_line(node)
+        set_lines_and_write(end_linenr, insert_lines)
+        return true -- Returning true makes `ts.execute_query` stop iterating over captures
+      end
+    end
+
+    local cb_datetree = function(query, id, node, _)
       if(query.captures[id] ~= "org-capture-target") then
         return false
       end
@@ -193,23 +204,67 @@ module.private = {
       return query
     end
 
-    local exec_query = function(query)
-      ts.execute_query(query, cb, target_bufnr)
+    local exec_query = function(query_string, cb)
+        local query = vim.treesitter.query.parse("norg", query_string)
+        local root = ts.get_document_root(target_bufnr)
+
+        if not root then
+            return false
+        end
+
+        for id, node, metadata in query:iter_captures(root, target_bufnr) do
+            if cb(query, id, node, metadata) == true then
+                return true
+            end
+        end
+
+        return false
     end
 
-    local build_and_execute_query = function(path_or_headline)
+    local build_and_execute_query = function(path_or_headline, cb)
       local query = build_query(path_or_headline)
-      exec_query(query)
+      return exec_query(query, cb)
     end
 
-    if data.headline then
-      build_and_execute_query({ data.headline })
+    if data.datetree then
+      local cb_find_datetree_path = function(query, id, _, _)
+        if(query.captures[id] ~= "org-capture-target") then
+          return false
+        end
+        return true -- Returning true makes `ts.execute_query` stop iterating over captures
+      end
+
+      local datetree_path = { data.headline, os.date("%Y"), os.date("%Y-%m %B"), os.date("%Y-%m-%d %A") }
+      local not_found = {}
+      while not build_and_execute_query(datetree_path, cb_find_datetree_path) do
+        print(vim.inspect(datetree_path))
+        local element = table.remove(datetree_path, #datetree_path)
+        table.insert(not_found, #not_found + 1, element)
+      end
+
+      local remaining_path = {}
+      for i, remaining in ipairs(not_found) do
+        table.insert(remaining_path, string.rep("*", #datetree_path + i) .. " " .. remaining)
+      end
+
+      print(vim.inspect(remaining_path))
+
+      build_and_execute_query(datetree_path, cb_non_datetree(remaining_path))
+
+      -- datetree_path = datetree_path + not_found
+      for _, value in ipairs(not_found) do
+        table.insert(datetree_path, value)
+      end
+
+      build_and_execute_query(datetree_path, cb_non_datetree(lines))
+    elseif data.headline then
+      build_and_execute_query({ data.headline }, cb_non_datetree(lines))
     elseif data.path then
-      build_and_execute_query(data.path)
+      build_and_execute_query(data.path, cb_non_datetree(lines))
     elseif data.query then
-      exec_query(data.query)
+      exec_query(data.query, cb_non_datetree(lines))
     else
-      set_lines_and_write(-1) -- Negative one means the end of the file
+      set_lines_and_write(-1, lines) -- Negative one means the end of the file
     end
   end
 
@@ -238,6 +293,7 @@ module.on_event = function(event)
           headline = data[idx].headline,
           path = data[idx].path,
           query = data[idx].query,
+          datetree = data[idx].datetree,
           calling_file = current_name,
           calling_bufnr = calling_bufnr,
           on_save = function(bufnr, passed_data) module.private.on_save(bufnr, passed_data) end
