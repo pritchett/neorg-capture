@@ -167,12 +167,12 @@ module.private = {
 
         local cb_non_datetree = function(insert_lines)
             return function(query, id, node, _)
-                if query.captures[id] ~= "org-capture-target" then
+                if query.captures[id] ~= "neorg-capture-target" then
                     return false
                 end
                 local end_linenr = end_line(node)
                 set_lines_and_write(end_linenr, insert_lines)
-                return true -- Returning true makes `ts.execute_query` stop iterating over captures
+                return true
             end
         end
 
@@ -202,7 +202,7 @@ module.private = {
                     .. ") "
                 end_parens = end_parens .. ")"
             end
-            query = query .. " ) @org-capture-target" .. end_parens
+            query = query .. " ) @neorg-capture-target" .. end_parens
             return query
         end
 
@@ -233,7 +233,7 @@ module.private = {
 
         local do_datetree = function(datetree_path)
             local cb_find_datetree_path = function(query, id, _, _)
-                if query.captures[id] ~= "org-capture-target" then
+                if query.captures[id] ~= "neorg-capture-target" then
                     return false
                 end
                 return true -- Returning true makes `ts.execute_query` stop iterating over captures
@@ -257,7 +257,7 @@ module.private = {
                 table.insert(remaining_path, string.rep("*", #datetree_path + i) .. " " .. remaining)
             end
 
-            if not #datetree_path == 0 then
+            if #datetree_path > 0 then
                 build_and_execute_query(datetree_path, cb_non_datetree(remaining_path))
             else
                 set_lines_and_write(-1, remaining_path)
