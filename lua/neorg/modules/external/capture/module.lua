@@ -86,6 +86,7 @@ module.private = {
                 path = item.path,
                 query = item.query,
                 datetree = item.datetree,
+                after_save = item.after_save,
             }
         end
 
@@ -93,7 +94,7 @@ module.private = {
             return item.enabled == nil or type(item.enabled) == "function" and item.enabled(bufnr) or item.enabled
         end
 
-        for _, item in ipairs(conf.templates) do
+        for _, item in ipairs(conf.templates or {}) do
             if item_is_enabled(item) then
                 if item.name and item.name ~= "" then
                     table.insert(items, item.description)
@@ -317,6 +318,9 @@ module.on_event = function(event)
                     calling_bufnr = calling_bufnr,
                     on_save = function(bufnr, passed_data)
                         module.private.on_save(bufnr, passed_data)
+                        if type(data[idx].after_save) == "function" then
+                            data[idx].after_save(bufnr, passed_data)
+                        end
                     end,
                 },
             })
