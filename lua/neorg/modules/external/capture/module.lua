@@ -50,7 +50,11 @@ module.load = function()
             vim.api.nvim_create_autocmd("QuitPre", {
                 buffer = bufnr,
                 callback = function(_)
-                    return args.data.on_save(bufnr, args.data)
+                    if not vim.api.nvim_buf_get_option(bufnr, "modified") then
+                        return args.data.on_save(bufnr, args.data)
+                    end
+
+                    return false
                 end,
             })
         end,
