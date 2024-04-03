@@ -252,7 +252,7 @@ module.private = {
         if query.captures[id] ~= "neorg-capture-target" then
           return false
         end
-        return true         -- Returning true makes `ts.execute_query` stop iterating over captures
+        return true -- Returning true makes `ts.execute_query` stop iterating over captures
       end
 
       local dates = { os.date("%Y"), os.date("%Y-%m %B"), os.date("%Y-%m-%d %A") }
@@ -301,7 +301,7 @@ module.private = {
     elseif data.query then
       exec_query(data.query, cb_non_datetree(lines))
     else
-      set_lines_and_write(-1, lines)       -- Negative one means the end of the file
+      set_lines_and_write(-1, lines) -- Negative one means the end of the file
     end
   end,
 }
@@ -318,6 +318,9 @@ module.on_event = function(event)
     vim.g.neorg_capture_file_link = vim.api.nvim_buf_get_name(calling_bufnr)
 
     vim.ui.select(items, { prompt = "Choose Template" }, function(_, idx)
+      if not data[idx] then
+        return
+      end
       local current_name = vim.api.nvim_buf_get_name(0)
       local file = "neorg-capture://" .. data[idx].template .. "//" .. current_name .. ".norg"
       vim.cmd("noautocmd split " .. file)
