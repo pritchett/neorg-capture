@@ -31,18 +31,6 @@ module.load = function()
     },
   })
 
-  -- module.required["external.templates"].add_keywords({
-  --     CAPTURE_FILENAME_LINK = function()
-  --         return require("luasnip").text_node(1, "{/ " .. vim.g.neorg_capture_file_link .. " }")
-  --     end,
-  -- })
-  -- vim.inspect(module.required['external.templates'])
-  -- table.insert(module.required['external.templates'].config.keywords, {
-  --   FILENAME = function()
-  --     return require("luasnip").text_node(1, "Hello")
-  --   end
-  -- })
-
   local gid = vim.api.nvim_create_augroup("neorg-capture", { clear = true })
   module.config.private.gid = gid
 
@@ -50,10 +38,10 @@ module.load = function()
     pattern = "neorg-capture://*.norg",
     callback = function(args)
       local bufnr = args.buf
-      vim.api.nvim_buf_set_option(bufnr, "filetype", "norg")
-      vim.api.nvim_buf_set_option(bufnr, "buftype", "acwrite")
-      vim.api.nvim_buf_set_option(bufnr, "bufhidden", "wipe")
-      vim.api.nvim_buf_set_option(bufnr, "buflisted", false)
+      vim.api.nvim_set_option_value("filetype", "norg", { buf = bufnr })
+      vim.api.nvim_set_option_value("buftype", "acwrite", { buf = bufnr })
+      vim.api.nvim_set_option_value("bufhidden", "wipe", { buf = bufnr })
+      vim.api.nvim_set_option_value("buflisted", false, { buf = bufnr })
       vim.api.nvim_buf_call(bufnr, function()
         vim.cmd("Neorg templates add " .. args.data.template)
       end)
@@ -61,7 +49,7 @@ module.load = function()
       vim.api.nvim_create_autocmd("QuitPre", {
         buffer = bufnr,
         callback = function(_)
-          if not vim.api.nvim_buf_get_option(bufnr, "modified") then
+          if not vim.api.nvim_get_option_value("modified", { buf = bufnr }) then
             return args.data.on_save(bufnr, args.data)
           end
 
@@ -75,7 +63,7 @@ module.load = function()
   vim.api.nvim_create_autocmd("BufWriteCmd", {
     pattern = "neorg-capture://*.norg",
     callback = function(args)
-      vim.api.nvim_buf_set_option(args.buf, "modified", false)
+      vim.api.nvim_set_option_value("modified", false, { buf = args.buf, })
     end,
     group = gid,
   })
@@ -157,7 +145,7 @@ module.private = {
     end
 
     if not already_open then
-      vim.api.nvim_buf_set_option(target_bufnr, "filetype", "norg")
+      vim.api.nvim_set_option_value("filetype", "norg", { buf = target_bufnr })
     end
 
     local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
